@@ -49,6 +49,11 @@ func GetProviderName(modelName string) []string {
 		providers = append(providers, name)
 	}
 
+	// 硬编码支持 Claude 模型映射到 OpenAI 兼容提供商
+	if strings.HasPrefix(strings.ToLower(modelName), "claude-") {
+		appendProvider("openai")
+	}
+
 	for _, provider := range registry.GetGlobalRegistry().GetModelProviders(modelName) {
 		appendProvider(provider)
 	}
@@ -59,6 +64,8 @@ func GetProviderName(modelName string) []string {
 
 	return providers
 }
+
+
 
 // ResolveAutoModel resolves the "auto" model name to an actual available model.
 // It uses an empty handler type to get any available model from the registry.
