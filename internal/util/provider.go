@@ -7,7 +7,6 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/registry"
-	log "github.com/sirupsen/logrus"
 )
 
 // GetProviderName 核心逻辑：将 Claude 模型强制映射到 codex 供应商
