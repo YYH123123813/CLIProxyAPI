@@ -19,7 +19,7 @@ import (
 //
 // Supported providers include (but are not limited to):
 //    - "gemini" for Google's Gemini family
-//    - "openai" for OpenAI GPT-compatible providers (and proxied Claude models)
+//    - "codex" for OpenAI GPT-compatible providers (and proxied Claude models)
 //    - "claude" for Anthropic models
 //    - "qwen" for Alibaba's Qwen models
 //    - "openai-compatibility" for external OpenAI-compatible providers
@@ -48,12 +48,14 @@ func GetProviderName(modelName string) []string {
 		providers = append(providers, name)
 	}
 
-	// 【核心修复】强行将所有以 claude- 开头的请求映射到 openai 供应商
-	// 这样服务器就会去 TOKENS 变量里找对应的 OpenAI Access Token 来处理请求
+	// 【核心修复】强制映射逻辑
+	// 只要模型名以 claude- 开头，就强制使用 "codex" 供应商。
+	// 这会引导程序去环境变量 TOKENS 中寻找 provider 为 "codex" 的 Token。
 	if strings.HasPrefix(strings.ToLower(modelName), "claude-") {
 		appendProvider("codex")
 	}
 
+	// 同时也尝试从注册表中获取其他可能的供应商
 	for _, provider := range registry.GetGlobalRegistry().GetModelProviders(modelName) {
 		appendProvider(provider)
 	}
