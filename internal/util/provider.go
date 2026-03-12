@@ -18,18 +18,17 @@ import (
 // potential providers.
 //
 // Supported providers include (but are not limited to):
-//   - "gemini" for Google's Gemini family
-//   - "codex" for OpenAI GPT-compatible providers
-//   - "claude" for Anthropic models
-//   - "qwen" for Alibaba's Qwen models
-//   - "openai-compatibility" for external OpenAI-compatible providers
+//    - "gemini" for Google's Gemini family
+//    - "openai" for OpenAI GPT-compatible providers (and proxied Claude models)
+//    - "claude" for Anthropic models
+//    - "qwen" for Alibaba's Qwen models
+//    - "openai-compatibility" for external OpenAI-compatible providers
 //
 // Parameters:
-//   - modelName: The name of the model to identify providers for.
-//   - cfg: The application configuration containing OpenAI compatibility settings.
+//    - modelName: The name of the model to identify providers for.
 //
 // Returns:
-//   - []string: All provider identifiers capable of serving the model, ordered by preference.
+//    - []string: All provider identifiers capable of serving the model, ordered by preference.
 func GetProviderName(modelName string) []string {
 	if modelName == "" {
 		return nil
@@ -49,7 +48,8 @@ func GetProviderName(modelName string) []string {
 		providers = append(providers, name)
 	}
 
-	// 硬编码支持 Claude 模型映射到 OpenAI 兼容提供商
+	// 【核心修复】强行将所有以 claude- 开头的请求映射到 openai 供应商
+	// 这样服务器就会去 TOKENS 变量里找对应的 OpenAI Access Token 来处理请求
 	if strings.HasPrefix(strings.ToLower(modelName), "claude-") {
 		appendProvider("openai")
 	}
@@ -58,29 +58,15 @@ func GetProviderName(modelName string) []string {
 		appendProvider(provider)
 	}
 
-	if len(providers) > 0 {
-		return providers
-	}
-
 	return providers
 }
 
-
-
 // ResolveAutoModel resolves the "auto" model name to an actual available model.
-// It uses an empty handler type to get any available model from the registry.
-//
-// Parameters:
-//   - modelName: The model name to check (should be "auto")
-//
-// Returns:
-//   - string: The resolved model name, or the original if not "auto" or resolution fails
 func ResolveAutoModel(modelName string) string {
 	if modelName != "auto" {
 		return modelName
 	}
 
-	// Use empty string as handler type to get any available model
 	firstModel, err := registry.GetGlobalRegistry().GetFirstAvailableModel("")
 	if err != nil {
 		log.Warnf("Failed to resolve 'auto' model: %v, falling back to original model name", err)
@@ -93,13 +79,6 @@ func ResolveAutoModel(modelName string) string {
 
 // IsOpenAICompatibilityAlias checks if the given model name is an alias
 // configured for OpenAI compatibility routing.
-//
-// Parameters:
-//   - modelName: The model name to check
-//   - cfg: The application configuration containing OpenAI compatibility settings
-//
-// Returns:
-//   - bool: True if the model name is an OpenAI compatibility alias, false otherwise
 func IsOpenAICompatibilityAlias(modelName string, cfg *config.Config) bool {
 	if cfg == nil {
 		return false
@@ -117,14 +96,6 @@ func IsOpenAICompatibilityAlias(modelName string, cfg *config.Config) bool {
 
 // GetOpenAICompatibilityConfig returns the OpenAI compatibility configuration
 // and model details for the given alias.
-//
-// Parameters:
-//   - alias: The model alias to find configuration for
-//   - cfg: The application configuration containing OpenAI compatibility settings
-//
-// Returns:
-//   - *config.OpenAICompatibility: The matching compatibility configuration, or nil if not found
-//   - *config.OpenAICompatibilityModel: The matching model configuration, or nil if not found
 func GetOpenAICompatibilityConfig(alias string, cfg *config.Config) (*config.OpenAICompatibility, *config.OpenAICompatibilityModel) {
 	if cfg == nil {
 		return nil, nil
@@ -141,15 +112,6 @@ func GetOpenAICompatibilityConfig(alias string, cfg *config.Config) (*config.Ope
 }
 
 // InArray checks if a string exists in a slice of strings.
-// It iterates through the slice and returns true if the target string is found,
-// otherwise it returns false.
-//
-// Parameters:
-//   - hystack: The slice of strings to search in
-//   - needle: The string to search for
-//
-// Returns:
-//   - bool: True if the string is found, false otherwise
 func InArray(hystack []string, needle string) bool {
 	for _, item := range hystack {
 		if needle == item {
@@ -159,33 +121,17 @@ func InArray(hystack []string, needle string) bool {
 	return false
 }
 
-// HideAPIKey obscures an API key for logging purposes, showing only the first and last few characters.
-//
-// Parameters:
-//   - apiKey: The API key to hide.
-//
-// Returns:
-//   - string: The obscured API key.
+// HideAPIKey obscures an API key for logging purposes.
 func HideAPIKey(apiKey string) string {
 	if len(apiKey) > 8 {
 		return apiKey[:4] + "..." + apiKey[len(apiKey)-4:]
 	} else if len(apiKey) > 4 {
 		return apiKey[:2] + "..." + apiKey[len(apiKey)-2:]
-	} else if len(apiKey) > 2 {
-		return apiKey[:1] + "..." + apiKey[len(apiKey)-1:]
 	}
 	return apiKey
 }
 
-// maskAuthorizationHeader masks the Authorization header value while preserving the auth type prefix.
-// Common formats: "Bearer <token>", "Basic <credentials>", "ApiKey <key>", etc.
-// It preserves the prefix (e.g., "Bearer ") and only masks the token/credential part.
-//
-// Parameters:
-//   - value: The Authorization header value
-//
-// Returns:
-//   - string: The masked Authorization value with prefix preserved
+// MaskAuthorizationHeader masks the Authorization header value while preserving the auth type prefix.
 func MaskAuthorizationHeader(value string) string {
 	parts := strings.SplitN(strings.TrimSpace(value), " ", 2)
 	if len(parts) < 2 {
@@ -195,18 +141,6 @@ func MaskAuthorizationHeader(value string) string {
 }
 
 // MaskSensitiveHeaderValue masks sensitive header values while preserving expected formats.
-//
-// Behavior by header key (case-insensitive):
-//   - "Authorization": Preserve the auth type prefix (e.g., "Bearer ") and mask only the credential part.
-//   - Headers containing "api-key": Mask the entire value using HideAPIKey.
-//   - Others: Return the original value unchanged.
-//
-// Parameters:
-//   - key:   The HTTP header name to inspect (case-insensitive matching).
-//   - value: The header value to mask when sensitive.
-//
-// Returns:
-//   - string: The masked value according to the header type; unchanged if not sensitive.
 func MaskSensitiveHeaderValue(key, value string) string {
 	lowerKey := strings.ToLower(strings.TrimSpace(key))
 	switch {
@@ -222,7 +156,7 @@ func MaskSensitiveHeaderValue(key, value string) string {
 	}
 }
 
-// MaskSensitiveQuery masks sensitive query parameters, e.g. auth_token, within the raw query string.
+// MaskSensitiveQuery masks sensitive query parameters within the raw query string.
 func MaskSensitiveQuery(raw string) string {
 	if raw == "" {
 		return ""
@@ -265,12 +199,6 @@ func shouldMaskQueryParam(key string) bool {
 	if key == "" {
 		return false
 	}
-	key = strings.TrimSuffix(key, "[]")
-	if key == "key" || strings.Contains(key, "api-key") || strings.Contains(key, "apikey") || strings.Contains(key, "api_key") {
-		return true
-	}
-	if strings.Contains(key, "token") || strings.Contains(key, "secret") {
-		return true
-	}
-	return false
+	return key == "key" || strings.Contains(key, "api-key") || strings.Contains(key, "apikey") || 
+		strings.Contains(key, "api_key") || strings.Contains(key, "token") || strings.Contains(key, "secret")
 }
