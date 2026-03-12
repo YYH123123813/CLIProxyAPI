@@ -51,7 +51,7 @@ func GetProviderName(modelName string) []string {
 	// 【核心修复】强行将所有以 claude- 开头的请求映射到 openai 供应商
 	// 这样服务器就会去 TOKENS 变量里找对应的 OpenAI Access Token 来处理请求
 	if strings.HasPrefix(strings.ToLower(modelName), "claude-") {
-		appendProvider("openai")
+		appendProvider("codex")
 	}
 
 	for _, provider := range registry.GetGlobalRegistry().GetModelProviders(modelName) {
