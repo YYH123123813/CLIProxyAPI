@@ -33,6 +33,27 @@
 
 只需一个 ChatGPT 账号，配合本代理即可在本地搭建一个专属的 AI 编程助手网关。
 
+### CPA / Codex OAuth 并发授权说明
+
+本服务暴露 CPA 兼容管理端点：
+
+- `GET /v0/management/codex-auth-url`
+- `POST /v0/management/oauth-callback`
+- `GET /v0/management/auth-files`
+- `GET /v0/management/auth-files/download?name=...`
+
+`/v0/management/codex-auth-url` 每次请求都会创建独立 OAuth `state` 与 PKCE 上下文，`/v0/management/oauth-callback` 会从客户端提交的 `redirect_url` 解析 `state` 并按 state 查找对应上下文。state 成功消费后会立即删除，因此同一个 callback 不能重复导入。
+
+默认 state TTL 为 30 分钟，可用环境变量调整：
+
+```bash
+CPA_OAUTH_STATE_TTL_MS=1800000
+```
+
+单实例部署默认使用内存 state store。多线程并发请求在单 Node 进程内安全；如果部署为多实例/多进程/Zeabur 多副本/PM2 cluster，必须使用共享 state store（推荐 Redis），否则 callback 可能被路由到另一个实例而出现 `unknown_or_expired_state`。当前代码已将 state store 抽象为 `CpaOAuthStateStore`，接 Redis 时应使用 `REDIS_URL` 或 `CPA_STATE_REDIS_URL`，并保证 `consume(state)` 是原子操作（Redis `GETDEL` 或 Lua）。
+
+管理鉴权保持不变：请求需带 `Authorization: Bearer <management-key>` 或 `X-Management-Key: <management-key>`。
+
 ## 🚀 快速开始 (Quick Start)
 
 ```bash

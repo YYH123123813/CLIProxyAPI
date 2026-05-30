@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "fs";
+import { basename, resolve } from "path";
 import type { AccountPool } from "../auth/account-pool.js";
 import type { RefreshScheduler } from "../auth/refresh-scheduler.js";
 import { validateManualToken } from "../auth/chatgpt-oauth.js";
@@ -7,16 +9,114 @@ import {
   startOAuthFlow,
   consumeSession,
   exchangeCode,
+  buildAuthUrl,
+  generatePKCE,
   requestDeviceCode,
   pollDeviceToken,
   importCliAuth,
 } from "../auth/oauth-pkce.js";
+import { createCpaOAuthStateStore } from "../auth/cpa-state-store.js";
+
+const CPA_AUTH_DIR = resolve(process.cwd(), "data", "cpa-auth-files");
+const cpaStateStore = createCpaOAuthStateStore();
+
+function managementKey(c: any): string {
+  return String(c.req.header("x-management-key") || c.req.header("authorization") || "").replace(/^Bearer\s+/i, "").trim();
+}
+
+function requireManagement(c: any) {
+  const config = getConfig();
+  const expected = String(config.server.proxy_api_key || process.env.CPA_MANAGEMENT_KEY || "").trim();
+  if (!expected || managementKey(c) !== expected) {
+    return c.json({ error: "invalid management key" }, 401);
+  }
+  return null;
+}
+
+function authFileName(email?: string | null, planType?: string | null): string {
+  const safe = String(email || "unknown").trim().toLowerCase().replace(/[^a-z0-9@._+-]+/g, "_");
+  const suffix = planType && planType !== "free" ? "-plus" : "";
+  return `codex-${safe}${suffix}.json`;
+}
 
 export function createAuthRoutes(
   pool: AccountPool,
   scheduler: RefreshScheduler,
 ): Hono {
   const app = new Hono();
+
+  // Minimal local CLI Proxy API / CPA-compatible management endpoints.
+  app.get("/v0/management/codex-auth-url", async (c) => {
+    const denied = requireManagement(c);
+    if (denied) return denied;
+    const { codeVerifier, codeChallenge } = generatePKCE();
+    const redirectUri = "http://localhost:1455/auth/callback";
+    const ctx = await cpaStateStore.create({
+      provider: "codex",
+      codeVerifier,
+      redirectUri,
+      requestId: c.req.header("x-request-id") || undefined,
+      clientId: getConfig().auth.oauth_client_id,
+      accountHint: c.req.query("account_hint") || c.req.query("email") || undefined,
+    });
+    const url = buildAuthUrl(redirectUri, ctx.state, codeChallenge);
+    return c.json({ url, auth_url: url, authUrl: url, state: ctx.state, expires_at: new Date(ctx.expiresAt).toISOString() });
+  });
+
+  app.post("/v0/management/oauth-callback", async (c) => {
+    const denied = requireManagement(c);
+    if (denied) return denied;
+    const body = await c.req.json<{ provider?: string; redirect_url?: string; callbackUrl?: string; callback_url?: string }>();
+    const provider = String(body.provider || "codex").trim() || "codex";
+    const callbackUrl = String(body.redirect_url || body.callbackUrl || body.callback_url || "").trim();
+    if (!callbackUrl) return c.json({ error: "redirect_url is required" }, 400);
+    let url: URL;
+    try { url = new URL(callbackUrl); } catch { return c.json({ error: "invalid redirect_url" }, 400); }
+    const code = url.searchParams.get("code") || "";
+    const state = url.searchParams.get("state") || "";
+    if (!code || !state) return c.json({ error: "invalid redirect_url", message: "redirect_url must contain code and state" }, 400);
+    const session = await cpaStateStore.consume(state);
+    if (!session || session.provider !== provider) {
+      return c.json({ error: "unknown_or_expired_state", message: "unknown or expired state" }, 410);
+    }
+    try {
+      const tokens = await exchangeCode(code, session.codeVerifier, session.redirectUri);
+      const entryId = pool.addAccount(tokens.access_token, tokens.refresh_token);
+      scheduler.scheduleOne(entryId, tokens.access_token);
+      const summary = pool.getPoolSummary();
+      const profileEmail = pool.getUserInfo()?.email || null;
+      const profilePlan = pool.getUserInfo()?.planType || null;
+      mkdirSync(CPA_AUTH_DIR, { recursive: true });
+      const name = authFileName(profileEmail, profilePlan);
+      writeFileSync(resolve(CPA_AUTH_DIR, name), JSON.stringify({ ...tokens, entry_id: entryId, email: profileEmail, plan_type: profilePlan, pool: summary }, null, 2));
+      return c.json({ success: true, name, entry_id: entryId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("[CPA] OAuth callback token exchange failed:", msg);
+      return c.json({ error: "token_exchange_failed", message: msg }, 500);
+    }
+  });
+
+  app.get("/v0/management/auth-files", (c) => {
+    const denied = requireManagement(c);
+    if (denied) return denied;
+    mkdirSync(CPA_AUTH_DIR, { recursive: true });
+    const files = readdirSync(CPA_AUTH_DIR).filter((name) => name.endsWith(".json")).map((name) => {
+      const st = statSync(resolve(CPA_AUTH_DIR, name));
+      return { name, type: "codex", disabled: false, size: st.size, updated_at: st.mtime.toISOString() };
+    });
+    return c.json({ files });
+  });
+
+  app.get("/v0/management/auth-files/download", (c) => {
+    const denied = requireManagement(c);
+    if (denied) return denied;
+    const name = basename(String(c.req.query("name") || ""));
+    if (!name) return c.json({ error: "name is required" }, 400);
+    const p = resolve(CPA_AUTH_DIR, name);
+    try { return c.json(JSON.parse(readFileSync(p, "utf8"))); }
+    catch { return c.json({ error: "not found" }, 404); }
+  });
 
   // Auth status (JSON) — pool-level summary
   app.get("/auth/status", (c) => {
