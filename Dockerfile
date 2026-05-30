@@ -3,11 +3,12 @@ FROM node:20-alpine
 RUN apk add --no-cache curl
 WORKDIR /app
 COPY . .
-# 安装后端依赖
+# 安装依赖
 RUN npm install
-# 进入前端文件夹并安装前端依赖
 RUN cd web && npm install
-# 重新执行打包构建
+# 编译
 RUN npm run build --if-present
-EXPOSE 18080
+# 显式指定容器内部环境变量端口为 8880
+ENV PORT=8880
+EXPOSE 8880
 CMD ["npm", "start"]
