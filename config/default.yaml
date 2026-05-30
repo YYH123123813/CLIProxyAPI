@@ -24,7 +24,7 @@ auth:
 server:
   host: "::"
   port: 8080
-  proxy_api_key: 4pv21191716
+  proxy_api_key: sk-cliproxyapi-default-key-change-me
 session:
   ttl_minutes: 60
   cleanup_interval_minutes: 5
