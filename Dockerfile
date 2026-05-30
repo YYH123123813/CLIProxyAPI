@@ -1,4 +1,6 @@
-FROM node:18-alpine
+FROM node:20-alpine
+# 安装 postinstall 脚本必需的 curl
+RUN apk add --no-cache curl
 WORKDIR /app
 COPY . .
 RUN npm install
