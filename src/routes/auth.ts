@@ -51,13 +51,14 @@ export function createAuthRoutes(
     if (denied) return denied;
     const { codeVerifier, codeChallenge } = generatePKCE();
     const redirectUri = "http://localhost:1455/auth/callback";
+    const accountHint = c.req.query("account_hint") || c.req.query("email") || c.req.header("x-account-hint") || c.req.header("x-bind-email") || undefined;
     const ctx = await cpaStateStore.create({
       provider: "codex",
       codeVerifier,
       redirectUri,
       requestId: c.req.header("x-request-id") || undefined,
       clientId: getConfig().auth.oauth_client_id,
-      accountHint: c.req.query("account_hint") || c.req.query("email") || undefined,
+      accountHint,
     });
     const url = buildAuthUrl(redirectUri, ctx.state, codeChallenge);
     return c.json({ url, auth_url: url, authUrl: url, state: ctx.state, expires_at: new Date(ctx.expiresAt).toISOString() });
@@ -84,8 +85,9 @@ export function createAuthRoutes(
       const entryId = pool.addAccount(tokens.access_token, tokens.refresh_token);
       scheduler.scheduleOne(entryId, tokens.access_token);
       const summary = pool.getPoolSummary();
-      const profileEmail = pool.getUserInfo()?.email || null;
-      const profilePlan = pool.getUserInfo()?.planType || null;
+      const entry = pool.getEntry(entryId);
+      const profileEmail = entry?.email || session.accountHint || null;
+      const profilePlan = entry?.planType || null;
       mkdirSync(CPA_AUTH_DIR, { recursive: true });
       const name = authFileName(profileEmail, profilePlan);
       writeFileSync(resolve(CPA_AUTH_DIR, name), JSON.stringify({ ...tokens, entry_id: entryId, email: profileEmail, plan_type: profilePlan, pool: summary }, null, 2));
